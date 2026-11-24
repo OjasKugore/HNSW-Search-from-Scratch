@@ -1,6 +1,6 @@
 # HNSW — Data Structures & Methodology
 
-> A deep-dive into the exact data structures and high-level algorithm used in this C implementation.
+> Design notes for the course project. The [project guide](../README.md) and [public header](../src/hnsw.h) describe the implemented interface.
 
 ---
 
@@ -41,7 +41,7 @@ Layer 0:  A-C-D-F-G-H-I-J-K-B-E-...     <- Street level (ALL vectors, most edges
 - Lower layers allow **fine-grained local search**.
 - Every vector lives at layer 0. Only a random subset reach higher layers.
 
-The result: nearest neighbour search runs in **O(log N)** instead of brute-force O(N x dim).
+The graph can reduce the number of distance calculations. Exact search evaluates all vectors.
 
 ---
 
@@ -51,31 +51,23 @@ The result: nearest neighbour search runs in **O(log N)** instead of brute-force
 
 **File:** `src/vector.h`, `src/vector.c`
 
-The fundamental unit of data. Wraps a heap-allocated float array with metadata.
+A standalone vector stores its ID, dimension, and float coordinates in one allocation.
 
 ```c
 typedef struct {
-    float  *data;    // The actual coordinate array, e.g. float[128]
-    int     dim;     // Dimensionality (e.g. 128, 384, 768)
-    int     id;      // Unique integer identifier
-    char   *label;   // Optional string label (e.g. "cat.jpg", "king")
+    int id;
+    int dim;
+    float data[];
 } Vector;
 ```
 
-**Memory layout:**
-```
-Vector (on heap)
-+-- id     = 42
-+-- dim    = 4
-+-- label  = "apple"
-+-- data ---> [ 0.12 | 0.87 | -0.43 | 0.55 ]   (float array on heap)
-```
+The index copies coordinates into a flat array. Each graph node can own a word label.
 
 **Distance functions** live here too:
 ```c
 float dist_l2_sq(const float *a, const float *b, int dim);         // ||a - b||^2
 float dist_cosine(const float *a, const float *b, int dim);        // 1 - cos(a,b)
-float dist_inner_product(const float *a, const float *b, int dim); // -a.b
+float dist_dot(const float *a, const float *b, int dim);           // dot product
 ```
 
 > Squared Euclidean is preferred because it avoids the `sqrt()` call and preserves ordering.
@@ -98,7 +90,7 @@ typedef struct {
     HeapItem *items;    // Contiguous array of HeapItems (the heap array)
     int       size;     // Current number of elements
     int       capacity; // Allocated capacity (doubles when full)
-    int       type;     // HEAP_MIN (0) or HEAP_MAX (1)
+    int       is_min;   // HEAP_MIN (1) or HEAP_MAX (0)
 } Heap;
 ```
 
@@ -133,8 +125,8 @@ Tracks which nodes have been visited during a single graph traversal. A key perf
 
 ```c
 typedef struct {
-    int *gen;         // gen[node_id] = generation when this node was last visited
-    int  current_gen; // The current query generation number
+    unsigned int *gen; // gen[node_id] = generation when this node was last visited
+    unsigned int current; // The current query generation number
     int  capacity;    // Total number of nodes tracked
 } VisitedSet;
 ```
@@ -144,11 +136,11 @@ typedef struct {
 Clearing a `bool` array is **O(N)** per query — catastrophic for 100K+ nodes. The generation trick avoids this:
 
 ```
-Query 1: current_gen = 1
+Query 1: current = 1
   -> Mark node 5: gen[5] = 1
   -> Mark node 9: gen[9] = 1
 
-Query 2: visited_reset() -> current_gen = 2   <- O(1)!
+Query 2: visited_reset() -> current = 2   <- O(1)!
   -> Node 5 is NOT visited (gen[5] == 1 != 2)
   -> Mark node 5: gen[5] = 2
 ```
@@ -166,8 +158,9 @@ typedef struct {
     int   id;                  // Same as its index in HNSWIndex.nodes[]
     int   level;               // Highest layer this node appears in (0-indexed)
     int **neighbors;           // neighbors[layer] -> int array of neighbor IDs
-    int  *neighbor_count;      // Number of valid entries in neighbors[layer]
-    int  *neighbor_capacity;   // Allocated capacity of neighbors[layer]
+    int  *n_count;      // Number of valid entries in neighbors[layer]
+    int  *n_cap;   // Allocated capacity of neighbors[layer]
+    char *label;               // Optional word label owned by the node
 } HNSWNode;
 ```
 
@@ -201,10 +194,10 @@ typedef struct {
     int        node_capacity;  // Allocated size of nodes[]
 
     /* Vectors (parallel array to nodes[]) */
-    Vector    *vectors;        // vectors[i] stores float data for node i
+    float     *raw_vectors;    // Vector i starts at raw_vectors + (size_t)i * dim
 
     /* Entry point */
-    int        entry_point_id; // ID of the single node at the highest layer
+    int        entry_point; // ID of the chosen node at the highest layer
     int        max_level;      // Current highest layer number in the graph
 
     /* Hyperparameters */
@@ -217,6 +210,7 @@ typedef struct {
 
     /* Pluggable distance metric */
     float    (*dist_fn)(const float*, const float*, int);
+    VisitedSet *visited;       // Scratch space shared by searches on this index
 } HNSWIndex;
 ```
 
@@ -224,14 +218,14 @@ typedef struct {
 
 ```
 HNSWIndex
-+-- vectors[]   -> [ Vector | Vector | Vector | ... ]   (parallel array)
++-- raw_vectors -> [ row 0 coordinates | row 1 coordinates | ... ]
 +-- nodes[]     -> [ *Node  | *Node  | *Node  | ... ]   (pointer array)
 |                      |
 |                   HNSWNode
 |                   +-- neighbors[0] -> [adj list at layer 0]
 |                   +-- neighbors[1] -> [adj list at layer 1]
 |                   +-- ...
-+-- entry_point_id = 42   (the single node at max_level)
++-- entry_point = 42   (the entry node at max_level)
 +-- max_level  = 3
 ```
 
@@ -302,7 +296,7 @@ hnsw_insert(idx, new_vec, id)
      |        for each neighbor: if degree > M -> prune its neighbor list
      |        ep <- closest node in candidates  <- entry point for next layer down
      |
-     +-- 4. If L > max_level -> new node becomes entry_point_id
+     +-- 4. If L > max_level -> new node becomes entry_point
 ```
 
 The two-phase design is intentional:
@@ -316,7 +310,7 @@ The two-phase design is intentional:
 ```
 hnsw_search(idx, query, k)
      |
-     +-- 1. ep <- entry_point_id  (start at top of hierarchy)
+     +-- 1. ep <- entry_point  (start at top of hierarchy)
      |
      +-- 2. Phase A: Greedy descent from max_level -> 1
      |      For each layer from max_level down to 1:
@@ -351,7 +345,7 @@ search_layer(idx, query_vec, ep, ef, layer, visited):
     c <- candidates.pop_min()    // closest unvisited candidate
     f <- results.peek_max()      // farthest node in result set
 
-    if dist(query, c) > dist(query, f):
+    if results.size == ef and dist(query, c) > dist(query, f):
       break   <- can't possibly improve results; stop
 
     for each neighbor e of c at this layer:
@@ -377,13 +371,9 @@ search_layer(idx, query_vec, ep, ef, layer, visited):
 
 ### Neighbour Selection
 
-After `search_layer()` returns a candidate set, you select which nodes to actually connect as neighbours.
+Insertion considers the candidates in order of distance. It prefers a candidate when no selected neighbor is closer to that candidate than the query is. The closest remaining candidates fill spare slots.
 
-**Simple (required):**
-Just pop the `M` closest items from the result heap.
-
-**Heuristic (optional, improves quality):**
-Prefer candidates that add *diversity* — a candidate is added only if it is closer to the query than to any already-selected neighbour. This prevents the graph from forming "cliques" and improves long-range navigability.
+The new node connects to each selected neighbor in both directions. When a list exceeds its limit, the index removes the farthest eligible link from both endpoints. Layer zero always links consecutive node IDs. These protected links keep every vector reachable, including duplicate vectors.
 
 ---
 
@@ -392,7 +382,7 @@ Prefer candidates that add *diversity* — a candidate is added only if it is cl
 ```
                    +-------------------+
                    |    HNSWIndex      |
-                   |  vectors[]  ------+--> [ Vector | Vector | ... ]
+                   |  raw_vectors -----+--> [ row 0 floats | row 1 floats | ... ]
                    |  nodes[]    ------+--> [ *HNSWNode | *HNSWNode | ... ]
                    |  entry_pt         |
                    +--------+----------+
@@ -415,7 +405,7 @@ During search_layer():
   +--------------------+
   | VisitedSet         |
   | gen[]              |
-  | current_gen = N    |   O(1) reset per query
+  | current = N    |   O(1) reset per query
   +--------------------+
 ```
 
@@ -425,14 +415,14 @@ During search_layer():
 
 | Operation | Complexity | Notes |
 |-----------|-----------|-------|
-| **Insert** | O(M * log N) | One `search_layer` per layer, `log N` layers |
-| **Query** | O(log N) | Upper layers greedy, O(1) amortised per layer |
-| **Brute force** | O(N * dim) | Linear scan, no index |
-| **Heap push/pop** | O(log ef) | ef = beam width (<= ef_construction or ef_search) |
-| **VisitedSet reset** | O(1) | Generation counter increment |
-| **select_neighbors** | O(ef * log ef) | Pop M items from a heap of ef items |
+| **Insert** | Data-dependent | Layer count, construction width, and edge selection affect cost |
+| **Query** | Data-dependent | Graph traversal can visit every vector |
+| **Brute force** | O(N × (dim + log(k + 1))) | Scan all vectors and retain the best k in a heap |
+| **Heap push/pop** | O(log H) | H is the heap size. The retained result heap contains at most ef items |
+| **VisitedSet reset** | Usually O(1) | Counter wraparound requires O(N) to clear the marks |
+| **Neighbor selection** | O(ef × (log ef + M × dim)) | Sort candidates and check distances to selected neighbors |
 
-**Memory:** O(N * M * L) where L = average level height ~= log(N).
+**Memory:** Vectors use O(N × dim) storage. Graph storage is O(N × M × L), where L is the average number of layers per node.
 
 ---
 

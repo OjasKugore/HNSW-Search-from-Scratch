@@ -1,5 +1,7 @@
 # 🔍 HNSW Vector Search Engine in C
 
+> This course brief records the original design and sample outputs. See the [project guide](../README.md) for the implemented API, commands, and benchmark.
+
 > **Course**: CS233AI — Data Structures and Applications (Semester III)
 > **Category**: Experiential Learning Project (Part B) — 40 Marks
 > **Program**: B.E. Computer Science and Engineering
@@ -65,7 +67,7 @@ Layer 0:  o-o-o-o-o-o-o-o-o-o-o-o        (dense, ALL vectors here)
 4. Repeat until you reach Layer 0.
 5. At Layer 0, do a wider **beam search** (explore `ef_search` candidates) and return the top-K closest vectors found.
 
-This gives you approximate nearest neighbours in **O(log N)** time instead of O(N) for brute force.
+This can reduce the number of distance calculations. Query cost depends on the graph, dataset, and search width.
 
 ---
 
@@ -82,7 +84,7 @@ HNSW satisfies every requirement:
 | Advanced data structure not in syllabus | HNSW multi-layer proximity graph |
 | Built on syllabus-covered structures | Uses heaps, linked lists, graphs, ADTs |
 | Demonstrates a real-world application | Vector similarity search (used in AI/NLP/image retrieval) |
-| Working code + brief report | Full C codebase + report in `report/` |
+| Working code + brief report | C codebase and planned course report |
 
 ---
 
@@ -94,7 +96,7 @@ HNSW is unique because it **uses every unit of the syllabus**:
 |------|--------|-----------------------|
 | **Unit I** — Linked Lists & ADTs | ADT, Dynamic Memory, Linked Lists | `Vector` and `HNSWIndex` are ADTs. Per-layer neighbor lists are dynamically allocated arrays (like linked lists). |
 | **Unit II** — Stacks | Stack, iterative problem-solving | Iterative graph traversal using an explicit stack (avoids recursive stack overflow during deep graph walks) |
-| **Unit III** — Queues & Priority Queues | Priority Queue, bounded buffers | **The most used structure in HNSW.** Min-heap for results, Max-heap for candidates in every `search_layer` call |
+| **Unit III** — Queues & Priority Queues | Priority Queue, bounded buffers | **The most used structure in HNSW.** Max-heap for results, min-heap for candidates in every `search_layer` call |
 | **Unit IV** — Trees & BST | Tree hierarchy, traversal | The HNSW layer structure is a tree of graphs. Greedy descent mirrors preorder tree traversal |
 | **Unit V** — Heaps, Graphs, Advanced Trees | Binary Heap, Graph (Adjacency List), Top-K | Binary Heap implements the priority queue. HNSW is a graph stored as adjacency lists. `hnsw_search()` solves Top-K problem |
 
@@ -106,8 +108,8 @@ HNSW is unique because it **uses every unit of the syllabus**:
 |----|-----------|---------------------------|
 | **CO1** | Demonstrate understanding of fundamental linear and non-linear data structures | Implements heap (linear), adjacency list graph (non-linear), ADT interfaces from scratch |
 | **CO2** | Apply data structures and memory management to organise data efficiently | Manual `malloc`/`free` for per-layer neighbor arrays, dynamic heap growth, visited-set generation trick |
-| **CO3** | Analyse computational problems and select appropriate data structures | Justifies min-heap vs max-heap choice, analyses O(M log N) insert and O(log N) query, measures Recall@K |
-| **CO4** | Develop solutions using good programming practices | Modular `.c/.h` files, separated concerns, Makefile build, no memory leaks (verified with Valgrind) |
+| **CO3** | Analyse computational problems and select appropriate data structures | Justifies min-heap vs max-heap choice, analyses construction cost and query cost, measures Recall@K |
+| **CO4** | Develop solutions using good programming practices | Modular `.c/.h` files, separated concerns, Makefile build, explicit ownership and cleanup |
 | **CO5** | Develop and demonstrate solutions for real-world problems through experiential learning | Demonstrated on real word embeddings — perform semantic nearest-neighbour search as the application |
 
 ---
@@ -195,12 +197,12 @@ float dist_inner_product(const float *a, const float *b, int dim);
 ### 3. `Heap` (Priority Queue) — `heap.h`
 
 The **most critical data structure** in this entire project. Used in every search and insert call. You need BOTH a min-heap and a max-heap because:
-- **Max-heap** = candidate set (tracks the farthest known candidate, prune if over capacity)
-- **Min-heap** = result set (efficiently extract the closest K results at the end)
+- **Min-heap** = candidate set (the next item is the closest candidate)
+- **Max-heap** = result set (the root is the farthest retained result)
 
 ```c
-#define HEAP_MIN 0
-#define HEAP_MAX 1
+#define HEAP_MIN 1
+#define HEAP_MAX 0
 
 typedef struct {
     int   node_id;
@@ -572,32 +574,7 @@ KNNResult *hnsw_search(HNSWIndex *idx, const float *query, int k);
 
 ## How to Build and Run
 
-```bash
-# Build everything
-make
-
-# Run the demo (inserts 1000 random vectors, runs 10 queries)
-./hnsw_demo
-
-# Run with custom parameters
-./hnsw_demo --dim 128 --M 16 --ef-construction 200 --ef-search 50 --vectors data/sample_vectors.txt
-
-# Run tests (includes Recall@K benchmark)
-make test
-./test_hnsw
-
-# Check for memory leaks
-valgrind --leak-check=full ./hnsw_demo
-```
-
-**Makefile targets:**
-
-```makefile
-all:        builds hnsw_demo
-test:       builds test_hnsw
-clean:      removes all .o and binaries
-valgrind:   runs hnsw_demo under valgrind
-```
+See the [project guide](../README.md) for working examples. Use `make test` to run the test suite and `make benchmark` to measure search quality and latency.
 
 ---
 
@@ -607,7 +584,7 @@ valgrind:   runs hnsw_demo under valgrind
 ```
 Push 1000 random (node_id, distance) pairs into a min-heap.
 Pop all 1000 items.
-Assert: each popped distance ≤ previous popped distance.
+Assert: each popped distance ≥ previous popped distance.
 → PASS means heap is correct.
 ```
 
@@ -615,7 +592,7 @@ Assert: each popped distance ≤ previous popped distance.
 ```
 For any vector v: dist_l2_sq(v, v) == 0.0f          (zero self-distance)
 For any a, b:     dist_l2_sq(a, b) == dist_l2_sq(b, a) (symmetry)
-For a, b, c:      dist(a,c) ≤ dist(a,b) + dist(b,c)    (triangle inequality)
+For orthogonal nonzero vectors, cosine distance is 1.
 ```
 
 ### 3. Insert Sanity Test
@@ -642,7 +619,7 @@ Print: "Recall@10: 0.94  (avg over 100 queries)"
 ```
 Dataset sizes: N = 1K, 10K, 100K vectors (dim=128)
 Measure: avg query time (microseconds) for brute force vs HNSW
-Print table:
+Illustrative output from the original plan (run make benchmark for measurements):
   N         | Brute Force | HNSW    | Speedup
   1,000     | 0.3 ms      | 0.05 ms | 6x
   10,000    | 3.1 ms      | 0.08 ms | 38x
@@ -654,26 +631,26 @@ Print table:
 ## Submission Checklist
 
 ### Code
-- [ ] `src/vector.c/.h` — Vector ADT + distance functions
-- [ ] `src/heap.c/.h` — Min/Max binary heap
-- [ ] `src/graph.c/.h` — HNSWNode with per-layer adjacency lists
-- [ ] `src/hnsw.c/.h` — Full HNSW index (insert + search)
-- [ ] `src/main.c` — Demo program
-- [ ] `tests/test_hnsw.c` — Tests with Recall@K output
-- [ ] `Makefile` — Builds and runs cleanly with `make`
+- [x] `src/vector.c/.h` — Vector ADT + distance functions
+- [x] `src/heap.c/.h` — Min/Max binary heap
+- [x] `src/graph.c/.h` — HNSWNode with per-layer adjacency lists
+- [x] `src/hnsw.c/.h` — Full HNSW index (insert + search)
+- [x] `src/main.c` — Demo program
+- [x] `tests/test_hnsw.c` — Tests with Recall@K output
+- [x] `Makefile` — Builds and runs cleanly with `make`
 
-### Report (`report/report.pdf`, 2–4 pages)
+### Report (`report/report.pdf`, 2–4 pages, on hold)
 - [ ] What is HNSW and how does it differ from basic graph BFS/DFS?
 - [ ] Which syllabus data structures were reused, and how?
 - [ ] What real-world problem does this solve? (application section)
-- [ ] Complexity analysis: O(M log N) insert, O(log N) query
+- [ ] Analyze insertion and query costs, including data-dependent graph traversal
 - [ ] Results table: Recall@K values and latency comparison
 
 ### Demo
-- [ ] Program compiles with `make` without errors or warnings
-- [ ] Inserts at least 1000 vectors
-- [ ] Returns correct nearest neighbours for at least 5 query examples
-- [ ] Prints Recall@10 ≥ 0.90
+- [x] Program compiles with `make` without errors or warnings
+- [x] Inserts at least 1000 vectors
+- [x] Returns correct nearest neighbours for at least 5 query examples
+- [x] Prints Recall@10 ≥ 0.90
 
 ---
 

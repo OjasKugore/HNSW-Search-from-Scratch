@@ -1,6 +1,7 @@
 # Build binaries
 hnsw_demo
 test_hnsw
+hnsw_bench
 
 # Object files & symbols
 *.o
@@ -8,3 +9,11 @@ test_hnsw
 
 # OS artifacts
 .DS_Store
+
+# Large local GloVe demo input and generated indexes
+/data/glove.6B.50d.first-50000.txt
+*.idx
+
+# Generated macOS bundle and its build cache
+/VectorSearch.app/
+/.build/vector-search/

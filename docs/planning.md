@@ -21,24 +21,26 @@ Mark modules as done by changing `[ ]` → `[x]`.
 ## Progress Tracker
 
 ```
-[x] Module 0 — Setup & Makefile
-[x] Module 1 — Vector ADT
-[x] Module 2 — Distance Functions
-[ ] Module 3 — Binary Heap (Min)
-[ ] Module 4 — Binary Heap (Max) & Unified Heap
-[ ] Module 5 — Visited Set
-[ ] Module 6 — Graph Node (HNSWNode)
-[ ] Module 7 — HNSW Index Skeleton
-[ ] Module 8 — Random Level Generator
-[ ] Module 9 — search_layer()      ← hardest
-[ ] Module 10 — select_neighbors()
-[ ] Module 11 — hnsw_insert()
-[ ] Module 12 — hnsw_search()
-[ ] Module 13 — Recall@K Testing
-[ ] Module 14 — Serialization (save/load)
-[ ] Module 15 — Real Data Demo
-[ ] Module 16 — Report
+[x] Module 0  — Setup & Makefile
+[x] Module 1  — Vector ADT
+[x] Module 2  — Distance Functions
+[x] Module 3  — Binary Heap (Min)
+[x] Module 4  — Binary Heap (Max) & Unified Heap
+[x] Module 5  — Visited Set
+[x] Module 6  — Graph Node (HNSWNode)
+[x] Module 7  — HNSW Index
+[x] Module 8  — Random Level Generator
+[x] Module 9  — search_layer()
+[x] Module 10 — Neighbor selection
+[x] Module 11 — hnsw_insert()
+[x] Module 12 — hnsw_search()
+[x] Module 13 — Recall@K and latency benchmarks
+[x] Module 14 — Serialization (save/load)
+[x] Module 15 — Real Data Demo
+[x] Module 16 — Report (docs/report/REPORT.md)
 ```
+
+> **Legend**: `[x]` = complete, `[~]` = in progress / partially done, `[ ]` = not started
 
 ---
 
@@ -119,14 +121,17 @@ Every subsequent module adds code to these files. The Makefile recompiles only w
 ### 🛠️ Build `src/vector.h` and `src/vector.c`
 
 **`vector.h`** — define the struct and declare functions:
+
+> ⚠️ **Implementation note**: The actual code uses a **flexible array member** (`float data[]`) instead of `float *data`. This allows a single `malloc` to allocate both the struct and the array contiguously — more cache-friendly and avoids a double-free. The struct field order is also `{id, dim, data[]}` (id before dim).
+
 ```c
 #ifndef VECTOR_H
 #define VECTOR_H
 
 typedef struct {
-    float *data;   // the float array
-    int    dim;    // number of dimensions
-    int    id;     // unique integer ID
+    int   id;      // unique integer ID
+    int   dim;     // number of dimensions
+    float data[];  // flexible array member — allocated inline with the struct
 } Vector;
 
 Vector *vector_create(int dim);
@@ -140,9 +145,9 @@ void    vector_print(const Vector *v);
 ```
 
 **`vector.c`** — implement each function. Key things to get right:
-- `vector_create` must `malloc` both the `Vector` struct AND the `data` array inside it
-- `vector_free` must `free` the inner `data` first, then the struct itself
-- `vector_fill_random` uses `(float)rand() / RAND_MAX`
+- `vector_create` uses a **single `malloc`**: `malloc(sizeof(Vector) + sizeof(float) * dim)` — allocates struct and data array together
+- `vector_free` only needs one `free(v)` — no separate data pointer to free
+- `vector_fill_random` uses `(float)rand() / (float)RAND_MAX`
 
 ### ✅ Verify
 In `main.c`, write a quick test:
@@ -163,7 +168,7 @@ vector_free(v);
 
 ## Module 2 — Distance Functions ✅ [COMPLETED]
 
-**Status**: Completed & verified in `src/main.c`
+**Status**: Completed and verified in `tests/test_hnsw.c`.
 **Time estimate**: 1 hour
 **Syllabus**: Unit I (apply mathematical operations on data)
 **CO**: CO1, CO3
@@ -212,8 +217,9 @@ assert(dist_cosine(a, b, 2) > 0.99f);       // 90° angle → ~1.0
 
 ---
 
-## Module 3 — Min-Heap (Priority Queue)
+## Module 3 — Min-Heap (Priority Queue) ✅ [COMPLETED]
 
+**Status**: The implementation and heap ordering tests are complete.
 **Time estimate**: 3–4 hours
 **Syllabus**: Unit III — Priority Queue, Unit V — Binary Heap
 **CO**: CO1, CO2
