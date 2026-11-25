@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HNSW Vector Search Engine - Interactive Visualizer</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body class="bg-[#faf8f5] text-[#1c1f1a] min-h-screen flex flex-col antialiased">
+
+  <!-- Top Navbar -->
+  <header class="bg-white/95 border-b border-[#e7e3db] backdrop-blur sticky top-0 z-50 px-6 py-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+    <div class="max-w-[1720px] mx-auto grid grid-cols-1 md:grid-cols-3 items-center gap-3">
+      <div class="hidden md:block"></div>
+      <div class="text-center">
+        <h1 class="text-base font-bold leading-tight text-[#171a15] tracking-tight">HNSW Vector Search Visualizer</h1>
+        <p class="text-xs text-[#6e746b] mt-0.5">Hierarchical Navigable Small World Proximity Graph Explorer</p>
+      </div>
+      <div class="flex items-center justify-center md:justify-end gap-3 text-xs">
+        <span class="text-[#646a61] hidden xl:inline font-medium">Click on canvas to reposition <strong class="text-[#c24134]">Query (Q)</strong></span>
+        <button id="btn-reseed" class="px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#f4f1ea] text-[#2c3328] border border-[#dcd7cd] font-medium transition shadow-xs">
+          Regenerate Graph
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Grid Workspace -->
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 p-5 max-w-[1720px] w-full mx-auto">
+
+    <!-- Left: Canvas Area (8 cols) -->
+    <div class="lg:col-span-8 flex flex-col gap-3.5">
+
+      <!-- Toolbar Card -->
+      <div class="bg-white border border-[#e7e3db] rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+        <!-- Playback Controls -->
+        <div class="flex items-center gap-1.5">
+          <button id="btn-play" class="px-4 py-1.5 rounded-xl bg-[#68885c] hover:bg-[#59784e] text-white font-semibold text-xs transition shadow-sm shadow-[#68885c]/25">
+            Play Search
+          </button>
+          <button id="btn-step-prev" class="px-3 py-1.5 rounded-xl bg-white hover:bg-[#f6f4ee] text-[#2c3328] font-mono text-xs border border-[#ddd7cc] transition shadow-xs">Back</button>
+          <button id="btn-step-next" class="px-3 py-1.5 rounded-xl bg-white hover:bg-[#f6f4ee] text-[#2c3328] font-mono text-xs border border-[#ddd7cc] transition shadow-xs">Step</button>
+          <button id="btn-reset" class="px-3 py-1.5 rounded-xl bg-white hover:bg-[#f6f4ee] text-[#2c3328] font-mono text-xs border border-[#ddd7cc] transition shadow-xs">Reset</button>
+        </div>
+
+        <!-- View Mode Switcher -->
+        <div class="flex items-center bg-[#f2efe9] p-1 rounded-xl border border-[#e2ddd3] text-xs font-medium">
+          <button id="view-all" class="px-3 py-1 rounded-lg bg-[#385232] text-white font-semibold transition shadow-xs">3-Layer Stack</button>
+          <button id="view-l2" class="px-3 py-1 rounded-lg text-[#61685e] hover:text-[#1c221a] transition">Layer 2 (Express)</button>
+          <button id="view-l1" class="px-3 py-1 rounded-lg text-[#61685e] hover:text-[#1c221a] transition">Layer 1 (Sub-express)</button>
+          <button id="view-l0" class="px-3 py-1 rounded-lg text-[#61685e] hover:text-[#1c221a] transition">Layer 0 (Base)</button>
+        </div>
+
+        <!-- Animation Speed Slider -->
+        <div class="flex items-center gap-2 text-xs font-mono text-[#61685e]">
+          <span>Speed:</span>
+          <input id="slider-speed" type="range" min="100" max="900" value="450" class="w-20 accent-[#68885c]">
+        </div>
+      </div>
+
+      <!-- Main Canvas Container -->
+      <div id="canvas-container" class="relative bg-white border border-[#e7e3db] rounded-2xl overflow-hidden shadow-xs flex-1 min-h-[530px] flex items-center justify-center cursor-crosshair">
+        <canvas id="main-canvas" class="w-full h-full block bg-[#fbfaf8]"></canvas>
+
+        <!-- Canvas Legend Overlay (fades out on hover) -->
+        <div id="canvas-legend" class="absolute bottom-4 left-4 bg-white/95 backdrop-blur border border-[#e2ddd3] rounded-xl p-3 text-xs space-y-1.5 shadow-md pointer-events-none transition-opacity duration-150">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-[#dc3e32] ring-2 ring-[#dc3e32]/30"></span>
+            <span class="text-[#2c3328] font-medium">Query Vector (Q) - click anywhere to place</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-[#385232] ring-2 ring-[#385232]/30"></span>
+            <span class="text-[#2c3328] font-medium">Active Candidate Node (Current beam front)</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-[#68885c] ring-2 ring-[#68885c]/30"></span>
+            <span class="text-[#2c3328] font-medium">Final Top-K Nearest Neighbors</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-5 h-0.5 bg-[#385232] inline-block"></span>
+            <span class="text-[#2c3328]">Greedy Path Jump</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-5 h-0.5 border-t-2 border-dashed border-[#b8862d] inline-block"></span>
+            <span class="text-[#2c3328]">Distance Evaluation Probe</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Ticker & Metrics Bar -->
+      <div class="bg-white border border-[#e7e3db] rounded-2xl p-3.5 flex items-center justify-between text-xs font-mono shadow-xs">
+        <div class="flex items-center gap-2.5 truncate">
+          <span class="text-[#6c7268] font-medium">Step Status:</span>
+          <span id="ticker-text" class="text-[#385632] font-bold truncate">Ready. Click 'Play Search' or 'Step'.</span>
+        </div>
+        <div class="flex items-center gap-5 shrink-0 text-[#596055]">
+          <span>Step: <strong id="step-counter" class="text-[#171a15]">0 / 0</strong></span>
+          <span>Distance Calls: <strong id="eval-counter" class="text-[#8f641b] font-bold">0</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Algorithm HUD, Heaps & Parameters (4 cols) -->
+    <div class="lg:col-span-4 flex flex-col gap-3.5">
+
+      <!-- Parameters Card -->
+      <div class="bg-white border border-[#e7e3db] rounded-2xl overflow-hidden shadow-xs">
+        <div class="bg-[#385232] px-4 py-2 text-white flex items-center justify-between">
+          <span class="text-[11px] font-bold uppercase tracking-wider font-mono">HNSW Search Parameters</span>
+          <span class="text-[10px] text-emerald-200 font-mono">Live Configuration</span>
+        </div>
+        <div class="p-4 space-y-3.5 text-xs font-mono">
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="text-[#646a61]">Graph Size (N):</span>
+              <span id="val-n" class="text-[#385232] font-bold">25 vectors</span>
+            </div>
+            <input id="slider-n" type="range" min="10" max="50" value="25" class="w-full accent-[#68885c]">
+          </div>
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="text-[#646a61]">Search Width (ef_search):</span>
+              <span id="val-ef" class="text-[#385232] font-bold">4 candidates</span>
+            </div>
+            <input id="slider-ef" type="range" min="1" max="10" value="4" class="w-full accent-[#68885c]">
+          </div>
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="text-[#646a61]">Max Layer Neighbors (M):</span>
+              <span id="val-m" class="text-[#385232] font-bold">4 links</span>
+            </div>
+            <input id="slider-m" type="range" min="2" max="6" value="4" class="w-full accent-[#68885c]">
+          </div>
+        </div>
+      </div>
+
+      <!-- Priority Queues (Live Heaps) Card -->
+      <div class="bg-white border border-[#e7e3db] rounded-2xl p-4 shadow-xs flex-1 flex flex-col min-h-[310px]">
+        <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-[#ece7de]">
+          <h2 class="text-xs font-bold text-[#1f251d] uppercase tracking-wider font-mono">
+            Priority Queues (Dual Heaps)
+          </h2>
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-[#edf3eb] text-[#3f5f38] font-mono border border-[#d3e2d0]">Active Heaps</span>
+        </div>
+
+        <div class="flex-1 flex flex-col gap-3 text-xs font-mono">
+          <!-- Min-Heap: Candidates Frontier -->
+          <div class="flex-1 bg-[#faf8f5] rounded-xl p-3 border border-[#e2ddd3] flex flex-col">
+            <div class="flex justify-between text-[11px] text-[#555d51] mb-2 font-medium">
+              <span class="font-bold text-[#35572e]">Frontier Queue (Min-Heap)</span>
+              <span>Next Candidate to Expand</span>
+            </div>
+            <div id="frontier-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1 font-mono text-[11px] text-[#2c3328]">
+              <div class="text-[#8c9287] italic">Queue is empty</div>
+            </div>
+          </div>
+
+          <!-- Max-Heap: Bounded Results -->
+          <div class="flex-1 bg-[#faf8f5] rounded-xl p-3 border border-[#e2ddd3] flex flex-col">
+            <div class="flex justify-between text-[11px] text-[#555d51] mb-2 font-medium">
+              <span class="font-bold text-[#68885c]">Bounded Results (Max-Heap)</span>
+              <span>Capacity = ef_search</span>
+            </div>
+            <div id="results-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1 font-mono text-[11px] text-[#2c3328]">
+              <div class="text-[#8c9287] italic">Results buffer is empty</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    let N = 25;
+    let M = 4;
+    let ef = 4;
+    let K = 2;
+    let viewMode = 'all';
+
+    let nodes = [];
+    let query = { x: 0.5, y: 0.5 };
+    let entryId = 0;
+    let steps = [];
+    let curStep = 0;
+    let playTimer = null;
+    let stepDelay = 450;
+
+    const canvasContainer = document.getElementById('canvas-container');
+    const canvasLegend = document.getElementById('canvas-legend');
+    const canvas = document.getElementById('main-canvas');
+    const ctx = canvas.getContext('2d');
+    let logicalW = 980;
+    let logicalH = 530;
+
+    function resizeCanvas() {
+      const rect = canvasContainer.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const dpr = window.devicePixelRatio || 1;
+      logicalW = rect.width;
+      logicalH = rect.height;
+      canvas.width = Math.round(logicalW * dpr);
+      canvas.height = Math.round(logicalH * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (steps.length > 0) render();
+    }
+
+    function dist(a, b) {
+      const dx = a.x - b.x, dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function generateHNSW() {
+      nodes = [];
+      for (let i = 0; i < N; i++) {
+        let lvl = 0;
+        const r = Math.random();
+        if (r < 0.16) lvl = 2;
+        else if (r < 0.48) lvl = 1;
+        nodes.push({
+          id: i,
+          x: 0.1 + Math.random() * 0.8,
+          y: 0.12 + Math.random() * 0.76,
+          level: lvl,
+          neighbors: [[], [], []]
+        });
+      }
+      nodes[0].level = 2;
+      entryId = 0;
+
+      for (let l = 0; l <= 2; l++) {
+        const eligible = nodes.filter(n => n.level >= l);
+        eligible.forEach(u => {
+          const sorted = eligible
+            .filter(v => v.id !== u.id)
+            .sort((a, b) => dist(u, a) - dist(u, b));
+          const limit = (l === 0) ? (M * 2) : M;
+          u.neighbors[l] = sorted.slice(0, limit).map(v => v.id);
+        });
+      }
+
+      recalculateSearch();
+    }
+
+    function recalculateSearch() {
+      steps = [];
+      let cur = entryId;
+      let distCalls = 0;
+      let path = [cur];
+
+      steps.push({
+        layer: 2,
+        active: cur,
+        inspected: [],
+        path: [...path],
+        frontier: [{ id: cur, dist: dist(nodes[cur], query) }],
+        results: [{ id: cur, dist: dist(nodes[cur], query) }],
+        desc: `Entry Point: Start at Node ${cur} on top expressway (Layer 2).`,
+        calls: 0
+      });
+
+      for (let l = 2; l >= 1; l--) {
+        let changed = true;
+        while (changed) {
+          changed = false;
+          const u = nodes[cur];
+          const nbrs = u.neighbors[l];
+          let best = cur;
+          let bestDist = dist(nodes[cur], query);
+
+          for (let nid of nbrs) {
+            distCalls++;
+            const d = dist(nodes[nid], query);
+            steps.push({
+              layer: l,
+              active: cur,
+              inspected: [nid],
+              path: [...path],
+              frontier: [{ id: nid, dist: d }],
+              results: [{ id: best, dist: bestDist }],
+              desc: `Layer ${l}: Probe neighbor ${nid} (dist = ${d.toFixed(3)} vs current = ${bestDist.toFixed(3)})`,
+              calls: distCalls
+            });
+            if (d < bestDist) {
+              best = nid;
+              bestDist = d;
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            cur = best;
+            path.push(cur);
+            steps.push({
+              layer: l,
+              active: cur,
+              inspected: [],
+              path: [...path],
+              frontier: [{ id: cur, dist: bestDist }],
+              results: [{ id: cur, dist: bestDist }],
+              desc: `Layer ${l}: Jump to closer node ${cur} (dist = ${bestDist.toFixed(3)})`,
+              calls: distCalls
+            });
+          }
+        }
+
+        steps.push({
+          layer: l - 1,
+          active: cur,
+          inspected: [],
+          path: [...path],
+          frontier: [{ id: cur, dist: dist(nodes[cur], query) }],
+          results: [{ id: cur, dist: dist(nodes[cur], query) }],
+          desc: `Local minimum on Layer ${l}. Drop down to Layer ${l - 1} express level.`,
+          calls: distCalls
+        });
+      }
+
+      let visited = new Set([cur]);
+      let frontier = [{ id: cur, dist: dist(nodes[cur], query) }];
+      let results = [{ id: cur, dist: dist(nodes[cur], query) }];
+
+      steps.push({
+        layer: 0,
+        active: cur,
+        inspected: [],
+        path: [...path],
+        frontier: [...frontier],
+        results: [...results],
+        desc: `Layer 0: Initialize beam search with ef=${ef}. Entry node: ${cur}`,
+        calls: distCalls
+      });
+
+      while (frontier.length > 0) {
+        frontier.sort((a, b) => a.dist - b.dist);
+        let candidate = frontier.shift();
+
+        results.sort((a, b) => b.dist - a.dist);
+        if (results.length >= ef && candidate.dist > results[0].dist) {
+          break;
+        }
+
+        let u = nodes[candidate.id];
+        for (let nid of u.neighbors[0]) {
+          if (!visited.has(nid)) {
+            visited.add(nid);
+            distCalls++;
+            let d = dist(nodes[nid], query);
+
+            if (results.length < ef || d < results[0].dist) {
+              frontier.push({ id: nid, dist: d });
+              results.push({ id: nid, dist: d });
+              results.sort((a, b) => b.dist - a.dist);
+              if (results.length > ef) {
+                results.shift();
+              }
+            }
+
+            steps.push({
+              layer: 0,
+              active: candidate.id,
+              inspected: [nid],
+              path: [...path],
+              frontier: [...frontier],
+              results: [...results],
+              desc: `Layer 0: Evaluated neighbor Node ${nid} (dist = ${d.toFixed(3)}). Updated priority queues.`,
+              calls: distCalls
+            });
+          }
+        }
+      }
+
+      results.sort((a, b) => a.dist - b.dist);
+      let finalK = results.slice(0, K).map(r => r.id);
+
+      steps.push({
+        layer: 0,
+        active: finalK[0],
+        inspected: [],
+        path: [...path],
+        frontier: [],
+        results: [...results.slice(0, K)],
+        finalK: finalK,
+        desc: `Search Complete! Top ${K} nearest neighbors found: [${finalK.join(', ')}] in ${distCalls} distance calculations.`,
+        calls: distCalls
+      });
+
+      curStep = 0;
+      pause();
+      render();
+      updateHUD();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, logicalW, logicalH);
+      const st = steps[curStep] || steps[0];
+
+      if (viewMode === 'all') {
+        renderStackedViews(st);
+      } else {
+        const l = (viewMode === 'l2') ? 2 : (viewMode === 'l1') ? 1 : 0;
+        renderSingleView(st, l);
+      }
+    }
+
+    function renderStackedViews(st) {
+      const colW = logicalW / 3;
+      const layers = [2, 1, 0];
+      const titles = ["Layer 2 (Expressway)", "Layer 1 (Sub-express)", "Layer 0 (Base - All Nodes)"];
+
+      layers.forEach((l, idx) => {
+        const ox = idx * colW;
+        const oy = 36;
+        const pw = colW - 14;
+        const ph = logicalH - 50;
+
+        const isActive = (st.layer === l);
+        ctx.fillStyle = isActive ? 'rgba(104, 136, 92, 0.08)' : '#ffffff';
+        ctx.strokeStyle = isActive ? '#385232' : '#e6e2da';
+        ctx.lineWidth = isActive ? 2 : 1;
+        ctx.beginPath();
+        ctx.roundRect(Math.round(ox + 7) + 0.5, oy + 0.5, Math.round(pw), Math.round(ph), 12);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isActive ? '#2d4728' : '#555d51';
+        ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText(titles[idx], Math.round(ox + 14), oy - 11);
+
+        function toScreen(pt) {
+          return {
+            x: ox + 22 + pt.x * (pw - 36),
+            y: oy + 20 + pt.y * (ph - 34)
+          };
+        }
+
+        drawLayerContents(st, l, toScreen, isActive);
+      });
+    }
+
+    function renderSingleView(st, l) {
+      const ox = 15, oy = 32;
+      const pw = logicalW - 30;
+      const ph = logicalH - 46;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#385232';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(ox + 0.5, oy + 0.5, Math.round(pw), Math.round(ph), 12);
+      ctx.fill();
+      ctx.stroke();
+
+      const titles = ["Layer 0 (Base - All Nodes)", "Layer 1 (Sub-express)", "Layer 2 (Expressway)"];
+      ctx.fillStyle = '#2d4728';
+      ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillText(titles[l], ox + 6, oy - 10);
+
+      function toScreen(pt) {
+        return {
+          x: ox + 28 + pt.x * (pw - 56),
+          y: oy + 24 + pt.y * (ph - 48)
+        };
+      }
+
+      drawLayerContents(st, l, toScreen, true);
+    }
+
+    function drawLayerContents(st, l, toScreen, isActive) {
+      ctx.strokeStyle = (l === 2) ? 'rgba(184, 134, 45, 0.4)' : (l === 1) ? 'rgba(68, 101, 61, 0.35)' : 'rgba(180, 175, 165, 0.45)';
+      ctx.lineWidth = 1.2;
+      nodes.filter(n => n.level >= l).forEach(u => {
+        const pu = toScreen(u);
+        u.neighbors[l].forEach(nid => {
+          const v = nodes[nid];
+          if (v && v.level >= l && u.id < v.id) {
+            const pv = toScreen(v);
+            ctx.beginPath();
+            ctx.moveTo(pu.x, pu.y);
+            ctx.lineTo(pv.x, pv.y);
+            ctx.stroke();
+          }
+        });
+      });
+
+      if (st.path && st.path.length > 1 && st.layer >= l) {
+        ctx.strokeStyle = '#385232';
+        ctx.lineWidth = 2.8;
+        ctx.beginPath();
+        for (let i = 0; i < st.path.length; i++) {
+          const p = toScreen(nodes[st.path[i]]);
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+      }
+
+      if (st.inspected && st.inspected.length > 0 && isActive && st.layer === l) {
+        const pu = toScreen(nodes[st.active]);
+        st.inspected.forEach(nid => {
+          const pv = toScreen(nodes[nid]);
+          ctx.strokeStyle = '#b8862d';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          ctx.moveTo(pu.x, pu.y);
+          ctx.lineTo(pv.x, pv.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        });
+      }
+
+      nodes.filter(n => n.level >= l).forEach(u => {
+        const pu = toScreen(u);
+        const isCurrent = (isActive && st.layer === l && st.active === u.id);
+        const isFinal = (st.finalK && st.finalK.includes(u.id));
+
+        ctx.beginPath();
+        ctx.arc(pu.x, pu.y, isCurrent ? 8 : isFinal ? 7 : 5, 0, Math.PI * 2);
+
+        if (isFinal) {
+          ctx.fillStyle = '#68885c';
+        } else if (isCurrent) {
+          ctx.fillStyle = '#385232';
+        } else if (u.level === 2) {
+          ctx.fillStyle = '#b8862d';
+        } else if (u.level === 1) {
+          ctx.fillStyle = '#5c7d53';
+        } else {
+          ctx.fillStyle = '#9aa196';
+        }
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+
+        ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+        const lx = Math.round(pu.x + 8);
+        const ly = Math.round(pu.y - 5);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.strokeText(u.id, lx, ly);
+        ctx.fillStyle = '#242a21';
+        ctx.fillText(u.id, lx, ly);
+      });
+
+      const pq = toScreen(query);
+      ctx.fillStyle = '#dc3e32';
+      ctx.beginPath();
+      ctx.arc(pq.x, pq.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.font = '700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      const qx = Math.round(pq.x + 9);
+      const qy = Math.round(pq.y + 13);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.strokeText('Q', qx, qy);
+      ctx.fillStyle = '#c22d22';
+      ctx.fillText('Q', qx, qy);
+    }
+
+    function updateHUD() {
+      const st = steps[curStep] || steps[0];
+      document.getElementById('ticker-text').textContent = st.desc || 'Idle';
+      document.getElementById('step-counter').textContent = `${curStep + 1} / ${steps.length}`;
+      document.getElementById('eval-counter').textContent = st.calls || 0;
+
+      const frontierEl = document.getElementById('frontier-list');
+      frontierEl.innerHTML = '';
+      if (st.frontier && st.frontier.length > 0) {
+        st.frontier.forEach(item => {
+          const div = document.createElement('div');
+          div.className = "flex justify-between bg-white px-2.5 py-1 rounded-lg border border-[#e4dfd5] shadow-xs";
+          div.innerHTML = `<span>Node <strong class="text-[#35572e]">${item.id}</strong></span><span class="text-[#596055] font-mono">d = ${item.dist.toFixed(3)}</span>`;
+          frontierEl.appendChild(div);
+        });
+      } else {
+        frontierEl.innerHTML = '<div class="text-[#8c9287] italic">Queue is empty</div>';
+      }
+
+      const resultsEl = document.getElementById('results-list');
+      resultsEl.innerHTML = '';
+      if (st.results && st.results.length > 0) {
+        st.results.forEach((item) => {
+          const isTop = (st.finalK && st.finalK.includes(item.id));
+          const div = document.createElement('div');
+          div.className = `flex justify-between px-2.5 py-1 rounded-lg border shadow-xs ${isTop ? 'bg-[#edf3eb] border-[#b9d4b3] text-[#2c4b26] font-bold' : 'bg-white border-[#e4dfd5] text-[#2c3328]'}`;
+          div.innerHTML = `<span>${isTop ? '[Top] ' : ''}Node <strong>${item.id}</strong></span><span class="${isTop ? 'text-[#385632]' : 'text-[#596055]'} font-mono">d = ${item.dist.toFixed(3)}</span>`;
+          resultsEl.appendChild(div);
+        });
+      } else {
+        resultsEl.innerHTML = '<div class="text-[#8c9287] italic">Results buffer is empty</div>';
+      }
+    }
+
+    function stepNext() {
+      if (curStep < steps.length - 1) {
+        curStep++;
+        render();
+        updateHUD();
+      } else {
+        pause();
+      }
+    }
+
+    function stepPrev() {
+      if (curStep > 0) {
+        curStep--;
+        render();
+        updateHUD();
+      }
+    }
+
+    function play() {
+      if (playTimer) return;
+      document.getElementById('btn-play').textContent = 'Pause';
+      playTimer = setInterval(() => {
+        if (curStep >= steps.length - 1) {
+          pause();
+        } else {
+          stepNext();
+        }
+      }, stepDelay);
+    }
+
+    function pause() {
+      if (playTimer) {
+        clearInterval(playTimer);
+        playTimer = null;
+      }
+      document.getElementById('btn-play').textContent = 'Play Search';
+    }
+
+    canvasContainer.addEventListener('mousemove', (e) => {
+      const r = canvasLegend.getBoundingClientRect();
+      const pad = 6;
+      const inside = (
+        e.clientX >= r.left - pad &&
+        e.clientX <= r.right + pad &&
+        e.clientY >= r.top - pad &&
+        e.clientY <= r.bottom + pad
+      );
+      canvasLegend.style.opacity = inside ? '0' : '1';
+    });
+
+    canvasContainer.addEventListener('mouseleave', () => {
+      canvasLegend.style.opacity = '1';
+    });
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      let normX = 0.5, normY = 0.5;
+      if (viewMode === 'all') {
+        const colW = logicalW / 3;
+        const pw = colW - 14;
+        const ph = logicalH - 50;
+        const localX = clickX % colW;
+        normX = Math.max(0.05, Math.min(0.95, (localX - 22) / (pw - 36)));
+        normY = Math.max(0.05, Math.min(0.95, (clickY - 56) / (ph - 34)));
+      } else {
+        const pw = logicalW - 30;
+        const ph = logicalH - 46;
+        normX = Math.max(0.05, Math.min(0.95, (clickX - 43) / (pw - 56)));
+        normY = Math.max(0.05, Math.min(0.95, (clickY - 56) / (ph - 48)));
+      }
+
+      query = { x: normX, y: normY };
+      recalculateSearch();
+    });
+
+    document.getElementById('btn-play').addEventListener('click', () => {
+      if (playTimer) pause();
+      else play();
+    });
+    document.getElementById('btn-step-next').addEventListener('click', () => { pause(); stepNext(); });
+    document.getElementById('btn-step-prev').addEventListener('click', () => { pause(); stepPrev(); });
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      pause();
+      curStep = 0;
+      render();
+      updateHUD();
+    });
+    document.getElementById('btn-reseed').addEventListener('click', () => {
+      pause();
+      generateHNSW();
+    });
+
+    const viewButtons = {
+      all: document.getElementById('view-all'),
+      l2: document.getElementById('view-l2'),
+      l1: document.getElementById('view-l1'),
+      l0: document.getElementById('view-l0'),
+    };
+    Object.keys(viewButtons).forEach(key => {
+      viewButtons[key].addEventListener('click', () => {
+        viewMode = key;
+        Object.values(viewButtons).forEach(btn => {
+          btn.className = "px-3 py-1 rounded-lg text-[#61685e] hover:text-[#1c221a] transition";
+        });
+        viewButtons[key].className = "px-3 py-1 rounded-lg bg-[#385232] text-white font-semibold transition shadow-xs";
+        render();
+      });
+    });
+
+    document.getElementById('slider-n').addEventListener('input', (e) => {
+      N = parseInt(e.target.value);
+      document.getElementById('val-n').textContent = `${N} vectors`;
+      generateHNSW();
+    });
+    document.getElementById('slider-ef').addEventListener('input', (e) => {
+      ef = parseInt(e.target.value);
+      document.getElementById('val-ef').textContent = `${ef} candidates`;
+      recalculateSearch();
+    });
+    document.getElementById('slider-m').addEventListener('input', (e) => {
+      M = parseInt(e.target.value);
+      document.getElementById('val-m').textContent = `${M} links`;
+      generateHNSW();
+    });
+    document.getElementById('slider-speed').addEventListener('input', (e) => {
+      stepDelay = 1000 - parseInt(e.target.value);
+      if (playTimer) {
+        pause();
+        play();
+      }
+    });
+
+    document.querySelectorAll('input[type="range"]').forEach(slider => {
+      slider.addEventListener('change', () => slider.blur());
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        pause();
+        stepNext();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        pause();
+        stepPrev();
+      }
+    });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(resizeCanvas).observe(canvasContainer);
+    } else {
+      window.addEventListener('resize', resizeCanvas);
+    }
+    resizeCanvas();
+    generateHNSW();
+  </script>
+</body>
+</html>
